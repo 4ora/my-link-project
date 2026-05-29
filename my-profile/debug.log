@@ -1,0 +1,28 @@
+node:internal/modules/cjs/loader:1459
+  throw err;
+  ^
+
+Error: Cannot find module '../telemetry/flush-telemetry'
+Require stack:
+- /Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/server/config.js
+- /Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/cli/next-test.js
+- /Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/bin/next
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1456:15)
+    at /Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/server/require-hook.js:68:36
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1556:12)
+    at mod.require (/Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/server/require-hook.js:79:28)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (/Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/server/config.js:42:25) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+    '/Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/server/config.js',
+    '/Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/cli/next-test.js',
+    '/Users/jobola/Desktop/바이브코딩/my-link/my-profile/node_modules/next/dist/bin/next'
+  ]
+}
+
+Node.js v24.14.1
