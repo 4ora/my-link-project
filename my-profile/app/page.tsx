@@ -315,28 +315,48 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-white text-black flex flex-col items-center uppercase tracking-[0.1em] text-[11px] sm:text-xs md:text-sm lg:text-base transition-all duration-300 relative">
       {/* Top Header */}
-      <header className="w-full text-center pt-24 pb-16 md:pt-32 md:pb-24 flex flex-col items-center">
+      <header className="w-full text-center pt-24 pb-16 md:pt-32 md:pb-24 flex flex-col items-center px-4">
+        {/* 미니멀 아바타 아이콘 */}
+        <div className="w-16 h-16 md:w-20 md:h-20 border border-black rounded-full flex items-center justify-center mb-6 opacity-80 bg-neutral-50/50">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={0.8} stroke="currentColor" className="w-8 h-8 md:w-10 md:h-10">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+          </svg>
+        </div>
+
         <h1 className="font-bold tracking-[0.2em] text-lg sm:text-xl md:text-2xl lg:text-3xl mb-4 md:mb-6">
           {isProfileLoading ? "LOADING..." : (profile?.username || "BORA JO")}
         </h1>
         <div className="w-[1px] h-8 md:h-12 lg:h-16 bg-black mx-auto mb-4 md:mb-6"></div>
-        <p className="opacity-60 text-[10px] md:text-xs lg:text-sm tracking-[0.15em] normal-case mb-6">
+        <p className="opacity-60 text-[10px] md:text-xs lg:text-sm tracking-[0.15em] normal-case mb-8">
           my-link.com/{isProfileLoading ? "loading" : (profile?.displayName || "bora_jo")}
         </p>
-        <button
-          onClick={() => {
-            setIsProfileDialogOpen(true);
-            setDuplicateError(null);
-            setDuplicateSuccess(null);
-            profileForm.reset({
-              username: profile?.username || "",
-              displayName: profile?.displayName || "",
-            });
-          }}
-          className="border border-black px-4 py-2 text-[9px] md:text-[10px] hover:bg-black hover:text-white transition-colors duration-300 tracking-[0.2em] font-semibold"
-        >
-          EDIT PROFILE
-        </button>
+
+        {/* 반응형 버튼 배치 (모바일 세로, sm 이상 가로 정렬) */}
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-center justify-center w-full max-w-xs sm:max-w-none">
+          {/* 내 페이지 바로가기 (Primary Solid Style) */}
+          <a
+            href={profile ? `/${profile.displayName}` : "#"}
+            className="w-full sm:w-auto bg-black text-white px-6 py-2.5 text-[9px] md:text-[10px] hover:bg-black/80 transition-colors duration-300 tracking-[0.2em] font-bold text-center border border-black"
+          >
+            내 페이지 바로가기
+          </a>
+
+          {/* 프로필 수정 (Secondary Style) */}
+          <button
+            onClick={() => {
+              setIsProfileDialogOpen(true);
+              setDuplicateError(null);
+              setDuplicateSuccess(null);
+              profileForm.reset({
+                username: profile?.username || "",
+                displayName: profile?.displayName || "",
+              });
+            }}
+            className="w-full sm:w-auto border border-black bg-white text-black px-6 py-2.5 text-[9px] md:text-[10px] hover:bg-black hover:text-white transition-colors duration-300 tracking-[0.2em] font-bold text-center"
+          >
+            EDIT PROFILE
+          </button>
+        </div>
       </header>
 
       {/* Main Content */}
