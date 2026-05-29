@@ -42,6 +42,7 @@ const profileSchema = z.object({
     .min(1, "Display name is required")
     .regex(/^[a-zA-Z0-9_-]+$/, "영문, 숫자, 하이픈(-), 언더바(_)만 가능합니다."),
   avatarUrl: z.string().optional(),
+  bio: z.string().max(150, "소개글은 150자 이내로 입력해주세요.").optional(),
 });
 
 type LinkFormValues = z.infer<typeof linkSchema>;
@@ -53,6 +54,7 @@ interface Profile {
   displayName: string;
   username: string;
   avatarUrl?: string;
+  bio?: string;
   createdAt: string;
 }
 
@@ -99,6 +101,7 @@ export default function Home() {
       username: "",
       displayName: "",
       avatarUrl: "",
+      bio: "",
     },
   });
 
@@ -229,6 +232,7 @@ export default function Home() {
         username: newProfile.username.trim(),
         displayName: newProfile.displayName.trim(),
         avatarUrl: newProfile.avatarUrl ? newProfile.avatarUrl.trim() : "",
+        bio: newProfile.bio ? newProfile.bio.trim() : "",
         updatedAt: new Date().toISOString(),
       });
     },
@@ -243,6 +247,7 @@ export default function Home() {
           username: newProfile.username,
           displayName: newProfile.displayName,
           avatarUrl: newProfile.avatarUrl,
+          bio: newProfile.bio,
         };
       });
 
@@ -500,6 +505,7 @@ export default function Home() {
               username: profile?.username || "",
               displayName: profile?.displayName || "",
               avatarUrl: profile?.avatarUrl || "",
+              bio: profile?.bio || "",
             });
           }}
           className="border border-black bg-white text-black px-4 py-2 hover:bg-black hover:text-white transition-colors duration-300 font-bold"
@@ -560,6 +566,7 @@ export default function Home() {
                   username: profile?.username || "",
                   displayName: profile?.displayName || "",
                   avatarUrl: profile?.avatarUrl || "",
+                  bio: profile?.bio || "",
                 });
               }}
               className="flex-1 border border-black bg-white text-black py-3 hover:bg-black hover:text-white transition-colors duration-300 font-bold text-center text-[9px]"
@@ -580,9 +587,11 @@ export default function Home() {
       <main className="w-full max-w-sm md:max-w-xl lg:max-w-3xl flex-1 flex flex-col px-6 md:px-12">
         
         {/* Intro / Bio */}
-        <div className="text-center mb-16 md:mb-24 opacity-80 leading-[1.8] tracking-wider text-[11px] md:text-xs lg:text-sm font-light normal-case">
-          안녕하세요. 바이브코딩을 배우고 있는 의류학과 학생입니다.
-        </div>
+        {(profile?.bio || !isProfileLoading) && (
+          <div className="text-center mb-16 md:mb-24 opacity-80 leading-[1.8] tracking-wider text-[11px] md:text-xs lg:text-sm font-light normal-case whitespace-pre-wrap">
+            {profile?.bio || ""}
+          </div>
+        )}
 
         {/* Add Link Button */}
         <div className="w-full flex justify-center mb-6">
@@ -987,6 +996,22 @@ export default function Home() {
                 {profileForm.formState.errors.displayName && <span className="text-[8px] md:text-[10px] text-red-500 normal-case tracking-normal mt-1">{profileForm.formState.errors.displayName.message}</span>}
                 {duplicateError && <span className="text-[8px] md:text-[10px] text-red-500 normal-case tracking-normal mt-1">{duplicateError}</span>}
                 {duplicateSuccess && <span className="text-[8px] md:text-[10px] text-green-600 normal-case tracking-normal mt-1">{duplicateSuccess}</span>}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] md:text-xs font-bold tracking-[0.15em] uppercase">BIO (소개글)</label>
+                  <span className={`text-[8px] md:text-[9px] tracking-normal normal-case ${(profileForm.watch("bio") || "").length > 150 ? "text-red-500" : "text-black/40"}`}>
+                    {(profileForm.watch("bio") || "").length} / 150
+                  </span>
+                </div>
+                <textarea
+                  {...profileForm.register("bio")}
+                  className={`border-b outline-none py-2 bg-transparent normal-case tracking-normal transition-colors resize-none text-[11px] md:text-xs leading-relaxed ${profileForm.formState.errors.bio ? "border-red-500" : "border-black/20 focus:border-black"}`}
+                  placeholder="간단한 소개글을 입력해주세요. (최대 150자)"
+                  rows={3}
+                />
+                {profileForm.formState.errors.bio && <span className="text-[8px] md:text-[10px] text-red-500 normal-case tracking-normal mt-1">{profileForm.formState.errors.bio.message}</span>}
               </div>
             </div>
 

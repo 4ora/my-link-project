@@ -46,6 +46,7 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
         username: string;
         displayName: string;
         avatarUrl?: string;
+        bio?: string;
         email: string;
         createdAt: string;
       };
@@ -127,9 +128,11 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
       <main className="w-full max-w-sm md:max-w-xl lg:max-w-3xl flex-1 flex flex-col px-6 md:px-12">
         
         {/* Intro / Bio */}
-        <div className="text-center mb-16 md:mb-24 opacity-80 leading-[1.8] tracking-wider text-[11px] md:text-xs lg:text-sm font-light normal-case">
-          안녕하세요. 제 페이지를 방문해 주셔서 감사합니다.
-        </div>
+        {userProfile?.bio && (
+          <div className="text-center mb-16 md:mb-24 opacity-80 leading-[1.8] tracking-wider text-[11px] md:text-xs lg:text-sm font-light normal-case whitespace-pre-wrap">
+            {userProfile.bio}
+          </div>
+        )}
 
         {/* Links List */}
         <div className="flex flex-col w-full gap-4 md:gap-6 border-t border-black pt-4 md:pt-8 lg:pt-12 mb-12">
