@@ -6,7 +6,8 @@ import Link from "next/link";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { db, auth, googleProvider } from "../lib/firebase";
+import { db, auth, googleProvider, storage } from "../lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { 
   collection, 
   addDoc, 
@@ -68,6 +69,7 @@ export default function Home() {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [deletingLink, setDeletingLink] = useState<LinkItem | null>(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
   // 중복 확인 관련 상태
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -882,25 +884,39 @@ export default function Home() {
                     </svg>
                   )}
                   {/* 오버레이 업로드 단추 */}
-                  <label className="absolute inset-0 bg-black/40 opacity-0 group-hover/avatar:opacity-100 transition-opacity duration-300 flex items-center justify-center cursor-pointer text-white text-[8px] md:text-[9px] font-bold tracking-widest uppercase">
-                    CHANGE
+                  <label className={`absolute inset-0 transition-opacity duration-300 flex items-center justify-center text-white text-[8px] md:text-[9px] font-bold tracking-widest uppercase ${isUploadingAvatar ? "bg-black/60 opacity-100 cursor-wait" : "bg-black/40 opacity-0 group-hover/avatar:opacity-100 cursor-pointer"}`}>
+                    {isUploadingAvatar ? "UPLOADING..." : "CHANGE"}
                     <input 
                       type="file" 
                       accept="image/*"
-                      className="hidden" 
-                      onChange={(e) => {
+                      className="hidden"
+                      disabled={isUploadingAvatar}
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          if (file.size > 700 * 1024) {
-                            toast.error("용량이 작은 미니멀한 이미지를 사용해 주세요 (700KB 이하).");
+                          if (file.size > 10 * 1024 * 1024) {
+                            toast.error("파일 크기가 10MB를 초과합니다.");
                             return;
                           }
-                          const reader = new FileReader();
-                          reader.onloadend = () => {
-                            profileForm.setValue("avatarUrl", reader.result as string, { shouldDirty: true });
-                            toast.success("프로필 이미지가 임시 업로드되었습니다. 저장 단추를 눌러주세요.");
-                          };
-                          reader.readAsDataURL(file);
+                          if (!user?.uid) {
+                            toast.error("로그인이 필요합니다.");
+                            return;
+                          }
+                          try {
+                            setIsUploadingAvatar(true);
+                            toast.info("이미지를 업로드하는 중입니다...");
+                            const timestamp = Date.now();
+                            const storageRef = ref(storage, `avatars/${user.uid}/${timestamp}_${file.name}`);
+                            await uploadBytes(storageRef, file);
+                            const downloadURL = await getDownloadURL(storageRef);
+                            profileForm.setValue("avatarUrl", downloadURL, { shouldDirty: true });
+                            toast.success("프로필 이미지가 업로드되었습니다. 저장 단추를 눌러주세요.");
+                          } catch (error) {
+                            console.error("Avatar upload error:", error);
+                            toast.error("이미지 업로드에 실패했습니다.");
+                          } finally {
+                            setIsUploadingAvatar(false);
+                          }
                         }
                       }}
                     />
