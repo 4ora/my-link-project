@@ -6,25 +6,59 @@ import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { db } from "../lib/firebase";
-import { collection, addDoc, getDocs, query, orderBy, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { 
+  collection, 
+  addDoc, 
+  getDocs, 
+  query, 
+  orderBy, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  where 
+} from "firebase/firestore";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 const linkSchema = z.object({
   title: z.string().min(1, "Title is required"),
   url: z.string().url("Invalid URL format").min(1, "URL is required"),
 });
 
+const profileSchema = z.object({
+  username: z.string().min(1, "Username is required"),
+  displayName: z.string()
+    .min(1, "Display name is required")
+    .regex(/^[a-zA-Z0-9_-]+$/, "영문, 숫자, 하이픈(-), 언더바(_)만 가능합니다."),
+});
+
 type LinkFormValues = z.infer<typeof linkSchema>;
+type ProfileFormValues = z.infer<typeof profileSchema>;
+
+interface Profile {
+  uid: string;
+  email: string;
+  displayName: string;
+  username: string;
+  createdAt: string;
+}
 
 export default function Home() {
-  const [links, setLinks] = useState<LinkItem[]>([]);
+  const queryClient = useQueryClient();
+  
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [isUpdating, setIsUpdating] = useState(false);
+  const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [deletingLink, setDeletingLink] = useState<LinkItem | null>(null);
 
-  // Form for ADDING new links
+  // 중복 확인 관련 상태
+  const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [duplicateSuccess, setDuplicateSuccess] = useState<string | null>(null);
+
+  // Forms
   const addForm = useForm<LinkFormValues>({
     resolver: zodResolver(linkSchema),
     defaultValues: {
@@ -33,7 +67,6 @@ export default function Home() {
     },
   });
 
-  // Form for INLINE EDITING existing links
   const editForm = useForm<LinkFormValues>({
     resolver: zodResolver(linkSchema),
     defaultValues: {
@@ -42,31 +75,143 @@ export default function Home() {
     },
   });
 
-  const fetchLinks = async (isInitial = false) => {
-    try {
-      if (isInitial) {
-        setIsInitialLoading(true);
+  const profileForm = useForm<ProfileFormValues>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: {
+      username: "",
+      displayName: "",
+    },
+  });
+
+  // 1. 프로필 Query
+  const { data: profile, isLoading: isProfileLoading } = useQuery<Profile>({
+    queryKey: ["profile"],
+    queryFn: async () => {
+      const docRef = doc(db, "users", "anonymous");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data() as Profile;
       } else {
-        setIsUpdating(true);
+        const defaultProfile: Profile = {
+          uid: "anonymous",
+          email: "anonymous@gmail.com",
+          displayName: "bora_jo",
+          username: "BORA JO",
+          createdAt: new Date().toISOString(),
+        };
+        await setDoc(docRef, defaultProfile);
+        return defaultProfile;
       }
+    },
+  });
+
+  // 2. 링크 Query
+  const { data: links = [], isLoading: isLinksLoading, isFetching: isLinksFetching } = useQuery<LinkItem[]>({
+    queryKey: ["links"],
+    queryFn: async () => {
       const q = query(collection(db, "users/anonymous/links"), orderBy("createdAt", "asc"));
       const snapshot = await getDocs(q);
-      const linksData = snapshot.docs.map(doc => ({
+      return snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as LinkItem[];
-      setLinks(linksData);
-    } catch (error) {
-      console.error("Error fetching documents: ", error);
-    } finally {
-      setIsInitialLoading(false);
-      setIsUpdating(false);
-    }
-  };
+    },
+  });
 
-  useEffect(() => {
-    fetchLinks(true);
-  }, []);
+  // 3. 링크 추가 Mutation
+  const addLinkMutation = useMutation({
+    mutationFn: async (data: LinkFormValues) => {
+      await addDoc(collection(db, "users/anonymous/links"), {
+        title: data.title.trim(),
+        url: data.url.trim(),
+        createdAt: new Date().toISOString(),
+      });
+    },
+    onSuccess: () => {
+      setIsDialogOpen(false);
+      addForm.reset();
+      queryClient.invalidateQueries({ queryKey: ["links"] });
+    },
+    onError: (error) => {
+      console.error("Error adding link:", error);
+    }
+  });
+
+  // 4. 링크 수정 Mutation
+  const editLinkMutation = useMutation({
+    mutationFn: async (data: LinkFormValues & { id: string }) => {
+      const linkDocRef = doc(db, "users/anonymous/links", data.id);
+      await updateDoc(linkDocRef, {
+        title: data.title.trim(),
+        url: data.url.trim(),
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    onSuccess: () => {
+      setEditingLinkId(null);
+      editForm.reset();
+      queryClient.invalidateQueries({ queryKey: ["links"] });
+    },
+    onError: (error) => {
+      console.error("Error updating link:", error);
+    }
+  });
+
+  // 5. 링크 삭제 Mutation
+  const deleteLinkMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await deleteDoc(doc(db, "users/anonymous/links", id));
+    },
+    onSuccess: () => {
+      if (editingLinkId === deletingLink?.id) {
+        setEditingLinkId(null);
+      }
+      setDeletingLink(null);
+      queryClient.invalidateQueries({ queryKey: ["links"] });
+    },
+    onError: (error) => {
+      console.error("Error deleting link:", error);
+    }
+  });
+
+  // 6. 프로필 수정 Mutation (Optimistic Update)
+  const updateProfileMutation = useMutation({
+    mutationFn: async (newProfile: ProfileFormValues) => {
+      const profileDocRef = doc(db, "users", "anonymous");
+      await updateDoc(profileDocRef, {
+        username: newProfile.username.trim(),
+        displayName: newProfile.displayName.trim(),
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    onMutate: async (newProfile) => {
+      await queryClient.cancelQueries({ queryKey: ["profile"] });
+      const previousProfile = queryClient.getQueryData<Profile>(["profile"]);
+      
+      queryClient.setQueryData<Profile>(["profile"], (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          username: newProfile.username,
+          displayName: newProfile.displayName,
+        };
+      });
+
+      return { previousProfile };
+    },
+    onError: (err, newProfile, context) => {
+      if (context?.previousProfile) {
+        queryClient.setQueryData(["profile"], context.previousProfile);
+      }
+      console.error("Error updating profile:", err);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
+    },
+    onSuccess: () => {
+      setIsProfileDialogOpen(false);
+    }
+  });
 
   // Global click listener to close active dropdown menu
   useEffect(() => {
@@ -79,36 +224,17 @@ export default function Home() {
     };
   }, []);
 
-  const onAddSubmit = async (data: LinkFormValues) => {
-    try {
-      await addDoc(collection(db, "users/anonymous/links"), {
-        title: data.title.trim(),
-        url: data.url.trim(),
-        createdAt: new Date().toISOString(),
-      });
-      setIsDialogOpen(false);
-      addForm.reset();
-      await fetchLinks();
-    } catch (error) {
-      console.error("Error adding document: ", error);
-    }
+  const onAddSubmit = (data: LinkFormValues) => {
+    addLinkMutation.mutate(data);
   };
 
-  const onEditSubmit = async (data: LinkFormValues) => {
+  const onEditSubmit = (data: LinkFormValues) => {
     if (!editingLinkId) return;
-    try {
-      const linkDocRef = doc(db, "users/anonymous/links", editingLinkId);
-      await updateDoc(linkDocRef, {
-        title: data.title.trim(),
-        url: data.url.trim(),
-        updatedAt: new Date().toISOString(),
-      });
-      setEditingLinkId(null);
-      editForm.reset();
-      await fetchLinks();
-    } catch (error) {
-      console.error("Error updating document: ", error);
-    }
+    editLinkMutation.mutate({ ...data, id: editingLinkId });
+  };
+
+  const onProfileSubmit = (data: ProfileFormValues) => {
+    updateProfileMutation.mutate(data);
   };
 
   const handleCloseDialog = () => {
@@ -124,31 +250,93 @@ export default function Home() {
     });
   };
 
-  const confirmDeleteLink = async () => {
+  const confirmDeleteLink = () => {
     if (!deletingLink) return;
+    deleteLinkMutation.mutate(deletingLink.id);
+  };
+
+  // displayName 중복 확인
+  const checkDisplayName = async (displayNameToCheck: string) => {
+    if (!displayNameToCheck.trim()) {
+      setDuplicateError("디스플레이 네임을 입력해주세요.");
+      return;
+    }
+    
+    // 정규식 검증
+    if (!/^[a-zA-Z0-9_-]+$/.test(displayNameToCheck)) {
+      setDuplicateError("영문, 숫자, 하이픈(-), 언더바(_)만 사용 가능합니다.");
+      return;
+    }
+
+    // 현재 디스플레이 네임과 같으면 통과
+    if (displayNameToCheck.trim() === profile?.displayName) {
+      setDuplicateSuccess("현재 사용 중인 디스플레이 네임입니다.");
+      setDuplicateError(null);
+      return;
+    }
+
+    setIsCheckingDuplicate(true);
+    setDuplicateError(null);
+    setDuplicateSuccess(null);
+
     try {
-      setIsUpdating(true);
-      await deleteDoc(doc(db, "users/anonymous/links", deletingLink.id));
-      // If the deleted link was being edited, close the inline edit form
-      if (editingLinkId === deletingLink.id) {
-        setEditingLinkId(null);
+      const usersRef = collection(db, "users");
+      const q = query(usersRef, where("displayName", "==", displayNameToCheck.trim()));
+      const snapshot = await getDocs(q);
+      const isDup = snapshot.docs.some(doc => doc.id !== "anonymous");
+
+      if (isDup) {
+        setDuplicateError("이미 사용 중인 디스플레이 네임입니다.");
+      } else {
+        setDuplicateSuccess("사용 가능한 디스플레이 네임입니다.");
       }
-      setDeletingLink(null);
-      await fetchLinks();
     } catch (error) {
-      console.error("Error deleting document: ", error);
+      console.error("Duplicate check error:", error);
+      setDuplicateError("중복 확인 중 에러가 발생했습니다.");
     } finally {
-      setIsUpdating(false);
+      setIsCheckingDuplicate(false);
     }
   };
+
+  // displayName 입력값 변경 감지하여 중복 검사 상태 초기화
+  const watchedDisplayName = profileForm.watch("displayName");
+  useEffect(() => {
+    if (watchedDisplayName !== profile?.displayName) {
+      setDuplicateSuccess(null);
+      setDuplicateError(null);
+    } else {
+      setDuplicateSuccess("현재 사용 중인 디스플레이 네임입니다.");
+      setDuplicateError(null);
+    }
+  }, [watchedDisplayName, profile?.displayName]);
+
+  const isUpdating = isLinksFetching || addLinkMutation.isPending || editLinkMutation.isPending || deleteLinkMutation.isPending;
 
   return (
     <div className="min-h-screen bg-white text-black flex flex-col items-center uppercase tracking-[0.1em] text-[11px] sm:text-xs md:text-sm lg:text-base transition-all duration-300 relative">
       {/* Top Header */}
-      <header className="w-full text-center pt-24 pb-16 md:pt-32 md:pb-24">
-        <h1 className="font-bold tracking-[0.2em] text-lg sm:text-xl md:text-2xl lg:text-3xl mb-4 md:mb-6">BORA JO</h1>
+      <header className="w-full text-center pt-24 pb-16 md:pt-32 md:pb-24 flex flex-col items-center">
+        <h1 className="font-bold tracking-[0.2em] text-lg sm:text-xl md:text-2xl lg:text-3xl mb-4 md:mb-6">
+          {isProfileLoading ? "LOADING..." : (profile?.username || "BORA JO")}
+        </h1>
         <div className="w-[1px] h-8 md:h-12 lg:h-16 bg-black mx-auto mb-4 md:mb-6"></div>
-        <p className="opacity-60 text-[10px] md:text-xs lg:text-sm tracking-[0.15em]">CLOTHING & TEXTILES</p>
+        <p className="opacity-60 text-[10px] md:text-xs lg:text-sm tracking-[0.15em] normal-case mb-6">
+          my-link.com/{isProfileLoading ? "loading" : (profile?.displayName || "bora_jo")}
+        </p>
+        <button
+          onClick={() => {
+            setIsProfileDialogOpen(true);
+            setDuplicateError(null);
+            setDuplicateSuccess(null);
+            profileForm.reset({
+              username: profile?.username || "",
+              displayName: profile?.displayName || "",
+            });
+          }}
+          className="border border-black px-4 py-2 text-[9px] md:text-[10px] hover:bg-black hover:text-white transition-colors duration-300 tracking-[0.2em] font-semibold"
+        >
+          EDIT PROFILE
+        </button>
       </header>
 
       {/* Main Content */}
@@ -178,7 +366,7 @@ export default function Home() {
             </div>
           )}
 
-          {isInitialLoading ? (
+          {isLinksLoading ? (
             <div className="text-center py-12 md:py-16 opacity-60 tracking-[0.15em] text-[10px] md:text-xs">
               LOADING LINKS...
             </div>
@@ -361,10 +549,10 @@ export default function Home() {
               </button>
               <button 
                 type="submit"
-                disabled={addForm.formState.isSubmitting}
+                disabled={addLinkMutation.isPending}
                 className="flex-1 bg-black text-white border border-black py-4 hover:bg-white hover:text-black transition-colors duration-300 tracking-[0.2em] font-bold text-[10px] md:text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-h-[50px]"
               >
-                {addForm.formState.isSubmitting ? (
+                {addLinkMutation.isPending ? (
                   <svg className="animate-spin h-4 w-4 text-current" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -399,7 +587,7 @@ export default function Home() {
               <button 
                 type="button"
                 onClick={() => setDeletingLink(null)}
-                disabled={isUpdating}
+                disabled={deleteLinkMutation.isPending}
                 className="flex-1 border border-black py-4 hover:bg-black/5 transition-colors duration-300 tracking-[0.2em] font-bold text-[10px] md:text-xs disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 CANCEL
@@ -407,10 +595,10 @@ export default function Home() {
               <button 
                 type="button"
                 onClick={confirmDeleteLink}
-                disabled={isUpdating}
+                disabled={deleteLinkMutation.isPending}
                 className="flex-1 bg-red-600 text-white border border-red-600 py-4 hover:bg-white hover:text-red-600 transition-colors duration-300 tracking-[0.2em] font-bold text-[10px] md:text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-h-[50px]"
               >
-                {isUpdating ? (
+                {deleteLinkMutation.isPending ? (
                   <svg className="animate-spin h-4 w-4 text-current" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -419,6 +607,81 @@ export default function Home() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Edit Profile Dialog */}
+      {isProfileDialogOpen && (
+        <div className="fixed inset-0 bg-white/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <form 
+            onSubmit={profileForm.handleSubmit(onProfileSubmit)}
+            className="bg-white border border-black w-full max-w-md p-8 md:p-10 flex flex-col gap-8 transition-all"
+          >
+            <h2 className="text-center font-bold tracking-[0.2em] text-lg md:text-xl border-b border-black pb-4">EDIT PROFILE</h2>
+            
+            <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] md:text-xs font-bold tracking-[0.15em] uppercase">USERNAME</label>
+                <input 
+                  type="text" 
+                  {...profileForm.register("username")}
+                  className={`border-b outline-none py-2 bg-transparent normal-case tracking-normal transition-colors ${profileForm.formState.errors.username ? "border-red-500" : "border-black/20 focus:border-black"}`}
+                  placeholder="e.g. BORA JO"
+                />
+                {profileForm.formState.errors.username && <span className="text-[8px] md:text-[10px] text-red-500 normal-case tracking-normal mt-1">{profileForm.formState.errors.username.message}</span>}
+              </div>
+              
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] md:text-xs font-bold tracking-[0.15em] uppercase">DISPLAY NAME (URL SLUG)</label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    {...profileForm.register("displayName")}
+                    className={`flex-1 border-b outline-none py-2 bg-transparent normal-case tracking-normal transition-colors ${profileForm.formState.errors.displayName ? "border-red-500" : "border-black/20 focus:border-black"}`}
+                    placeholder="e.g. bora_jo"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => checkDisplayName(profileForm.getValues("displayName"))}
+                    disabled={isCheckingDuplicate}
+                    className="border border-black px-4 py-2 text-[9px] md:text-[10px] hover:bg-black hover:text-white transition-colors duration-300 tracking-[0.1em] font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isCheckingDuplicate ? "CHECKING..." : "DUPLICATE CHECK"}
+                  </button>
+                </div>
+                {profileForm.formState.errors.displayName && <span className="text-[8px] md:text-[10px] text-red-500 normal-case tracking-normal mt-1">{profileForm.formState.errors.displayName.message}</span>}
+                {duplicateError && <span className="text-[8px] md:text-[10px] text-red-500 normal-case tracking-normal mt-1">{duplicateError}</span>}
+                {duplicateSuccess && <span className="text-[8px] md:text-[10px] text-green-600 normal-case tracking-normal mt-1">{duplicateSuccess}</span>}
+              </div>
+            </div>
+
+            <div className="flex gap-4 mt-4">
+              <button 
+                type="button"
+                onClick={() => setIsProfileDialogOpen(false)}
+                disabled={updateProfileMutation.isPending}
+                className="flex-1 border border-black py-4 hover:bg-black/5 transition-colors duration-300 tracking-[0.2em] font-bold text-[10px] md:text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                CANCEL
+              </button>
+              <button 
+                type="submit"
+                disabled={
+                  updateProfileMutation.isPending || 
+                  !!duplicateError || 
+                  (!duplicateSuccess && profileForm.getValues("displayName") !== profile?.displayName)
+                }
+                className="flex-1 bg-black text-white border border-black py-4 hover:bg-white hover:text-black transition-colors duration-300 tracking-[0.2em] font-bold text-[10px] md:text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-h-[50px]"
+              >
+                {updateProfileMutation.isPending ? (
+                  <svg className="animate-spin h-4 w-4 text-current" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                ) : "SAVE"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
