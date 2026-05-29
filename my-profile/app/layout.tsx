@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
+import { Toaster } from "sonner";
 
 const notoSansKR = Noto_Sans_KR({
   subsets: ["latin"],
@@ -10,8 +11,8 @@ const notoSansKR = Noto_Sans_KR({
 });
 
 export const metadata: Metadata = {
-  title: "BORA JO",
-  description: "바이브코딩을 배우고 있는 의류학과 학생, bora jo의 프로필 페이지입니다.",
+  title: "MYLINK",
+  description: "바이브코딩으로 개인화된 프로필과 링크를 간편하게 관리하는 MYLINK 공간입니다.",
 };
 
 export default function RootLayout({
@@ -22,7 +23,24 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body className={`${notoSansKR.variable} antialiased`}>
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          <Toaster 
+            position="bottom-right" 
+            toastOptions={{
+              style: {
+                background: "#000",
+                color: "#fff",
+                border: "1px solid #000",
+                borderRadius: "0px",
+                fontFamily: "var(--font-noto-sans-kr)",
+                fontSize: "11px",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase"
+              }
+            }} 
+          />
+        </Providers>
       </body>
     </html>
   );

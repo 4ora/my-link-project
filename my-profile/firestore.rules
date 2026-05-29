@@ -26,13 +26,22 @@ service cloud.firestore {
         // 읽기: 누구나 가능 (방문자 링크 조회)
         allow read: if true;
         
-        // 쓰기 (생성 및 수정): 로그인되어 있고, 요청 uid가 상위 문서의 userId와 일치할 때만 허용
-        // 링크 타이틀 및 목적지 URL에 대한 기본적인 자료형 및 최소 크기 검증
-        allow create, update: if request.auth != null && request.auth.uid == userId
+        // 생성: 로그인되어 있고, 요청 uid가 상위 문서의 userId와 일치할 때만 허용
+        allow create: if request.auth != null && request.auth.uid == userId
           && request.resource.data.title is string
           && request.resource.data.title.size() >= 1
           && request.resource.data.url is string
           && request.resource.data.url.size() >= 5;
+
+        // 수정:
+        // A) 본인인 경우: 링크 타이틀, URL을 자유롭게 편집 가능
+        // B) 방문자인 경우: 오직 'clicks' 필드만 변경한다면 수학적 증분 제약 없이 누구나 수정 가능하도록 전면 허용
+        allow update: if (request.auth != null && request.auth.uid == userId
+            && request.resource.data.title is string
+            && request.resource.data.title.size() >= 1
+            && request.resource.data.url is string
+            && request.resource.data.url.size() >= 5)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['clicks']));
           
         allow delete: if request.auth != null && request.auth.uid == userId;
       }

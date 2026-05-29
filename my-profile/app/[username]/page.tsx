@@ -8,9 +8,12 @@ import {
   getDocs, 
   query, 
   orderBy, 
-  where 
+  where,
+  updateDoc,
+  doc,
+  increment
 } from "firebase/firestore";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
 
 interface UserProfilePageProps {
@@ -42,6 +45,7 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
         uid: string;
         username: string;
         displayName: string;
+        avatarUrl?: string;
         email: string;
         createdAt: string;
       };
@@ -69,12 +73,47 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
     notFound();
   }
 
+  // 3. 방문자용 클릭 트래킹 Mutation (상대방 uid 기반의 경로로 clicks increment 처리)
+  const trackClickMutation = useMutation({
+    mutationFn: async (linkId: string) => {
+      if (!userProfile?.uid) return;
+      const linkDocRef = doc(db, `users/${userProfile.uid}/links`, linkId);
+      await updateDoc(linkDocRef, {
+        clicks: increment(1),
+      });
+    },
+    onError: (error) => {
+      console.error("Error tracking click:", error);
+    }
+  });
+
+  const handleLinkClick = (linkId: string) => {
+    trackClickMutation.mutate(linkId);
+  };
+
   const isLoading = isUserLoading || isLinksLoading;
 
   return (
     <div className="min-h-screen bg-white text-black flex flex-col items-center uppercase tracking-[0.1em] text-[11px] sm:text-xs md:text-sm lg:text-base transition-all duration-300 relative">
       {/* Top Header */}
-      <header className="w-full text-center pt-24 pb-16 md:pt-32 md:pb-24 flex flex-col items-center">
+      <header className="w-full text-center pt-24 pb-16 md:pt-32 md:pb-24 flex flex-col items-center px-4">
+        {/* 미니멀 아바타 아이콘 */}
+        <div className="w-16 h-16 md:w-20 md:h-20 border border-black rounded-full flex items-center justify-center mb-6 opacity-80 bg-neutral-50/50 overflow-hidden">
+          {isLoading ? (
+            <div className="w-4 h-4 md:w-5 md:h-5 border-t border-black rounded-full animate-spin"></div>
+          ) : userProfile?.avatarUrl ? (
+            <img 
+              src={userProfile.avatarUrl} 
+              alt="Profile Avatar" 
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={0.8} stroke="currentColor" className="w-8 h-8 md:w-10 md:h-10">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+            </svg>
+          )}
+        </div>
+
         <h1 className="font-bold tracking-[0.2em] text-lg sm:text-xl md:text-2xl lg:text-3xl mb-4 md:mb-6">
           {isLoading ? "LOADING..." : (userProfile?.username || "BORA JO")}
         </h1>
@@ -109,6 +148,7 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => handleLinkClick(link.id)}
                 className="group relative flex justify-center items-center w-full py-4 md:py-6 lg:py-8 border-b border-black hover:px-4 md:hover:px-8 transition-all duration-300 ease-in-out"
               >
                 <div className="flex items-center gap-4">

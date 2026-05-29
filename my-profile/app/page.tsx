@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { LinkItem } from "../Data/links";
+import Link from "next/link";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { db } from "../lib/firebase";
+import { db, auth, googleProvider } from "../lib/firebase";
 import { 
   collection, 
   addDoc, 
@@ -17,9 +18,17 @@ import {
   doc, 
   getDoc, 
   setDoc, 
-  where 
+  where,
+  increment
 } from "firebase/firestore";
+import { 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  User 
+} from "firebase/auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 const linkSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -31,6 +40,7 @@ const profileSchema = z.object({
   displayName: z.string()
     .min(1, "Display name is required")
     .regex(/^[a-zA-Z0-9_-]+$/, "영문, 숫자, 하이픈(-), 언더바(_)만 가능합니다."),
+  avatarUrl: z.string().optional(),
 });
 
 type LinkFormValues = z.infer<typeof linkSchema>;
@@ -41,12 +51,18 @@ interface Profile {
   email: string;
   displayName: string;
   username: string;
+  avatarUrl?: string;
   createdAt: string;
 }
 
 export default function Home() {
   const queryClient = useQueryClient();
   
+  // 인증 세션 상태
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  // UI 상태
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -80,67 +96,90 @@ export default function Home() {
     defaultValues: {
       username: "",
       displayName: "",
+      avatarUrl: "",
     },
   });
 
+  // 0. 실시간 Auth 상태 관측
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
   // 1. 프로필 Query
   const { data: profile, isLoading: isProfileLoading } = useQuery<Profile>({
-    queryKey: ["profile"],
+    queryKey: ["profile", user?.uid],
     queryFn: async () => {
-      const docRef = doc(db, "users", "anonymous");
+      if (!user?.uid) throw new Error("Not logged in");
+      const docRef = doc(db, "users", user.uid);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         return docSnap.data() as Profile;
       } else {
+        // 혹시 가입 로직이 유실된 경우를 위한 안전장치 기본 데이터 생성
+        const emailId = user.email ? user.email.split("@")[0] : "user";
+        const sanitizedDisplayName = emailId.replace(/[^a-zA-Z0-9_-]/g, "_");
         const defaultProfile: Profile = {
-          uid: "anonymous",
-          email: "anonymous@gmail.com",
-          displayName: "bora_jo",
-          username: "BORA JO",
+          uid: user.uid,
+          email: user.email || "",
+          displayName: sanitizedDisplayName,
+          username: user.displayName || "BORA JO",
+          avatarUrl: user.photoURL || "",
           createdAt: new Date().toISOString(),
         };
         await setDoc(docRef, defaultProfile);
         return defaultProfile;
       }
     },
+    enabled: !!user?.uid,
   });
 
   // 2. 링크 Query
   const { data: links = [], isLoading: isLinksLoading, isFetching: isLinksFetching } = useQuery<LinkItem[]>({
-    queryKey: ["links"],
+    queryKey: ["links", user?.uid],
     queryFn: async () => {
-      const q = query(collection(db, "users/anonymous/links"), orderBy("createdAt", "asc"));
+      if (!user?.uid) return [];
+      const q = query(collection(db, `users/${user.uid}/links`), orderBy("createdAt", "asc"));
       const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as LinkItem[];
     },
+    enabled: !!user?.uid,
   });
 
   // 3. 링크 추가 Mutation
   const addLinkMutation = useMutation({
     mutationFn: async (data: LinkFormValues) => {
-      await addDoc(collection(db, "users/anonymous/links"), {
+      if (!user?.uid) return;
+      await addDoc(collection(db, `users/${user.uid}/links`), {
         title: data.title.trim(),
         url: data.url.trim(),
+        clicks: 0,
         createdAt: new Date().toISOString(),
       });
     },
     onSuccess: () => {
       setIsDialogOpen(false);
       addForm.reset();
-      queryClient.invalidateQueries({ queryKey: ["links"] });
+      queryClient.invalidateQueries({ queryKey: ["links", user?.uid] });
+      toast.success("새로운 링크가 추가되었습니다.");
     },
     onError: (error) => {
       console.error("Error adding link:", error);
+      toast.error("링크 추가에 실패했습니다.");
     }
   });
 
   // 4. 링크 수정 Mutation
   const editLinkMutation = useMutation({
     mutationFn: async (data: LinkFormValues & { id: string }) => {
-      const linkDocRef = doc(db, "users/anonymous/links", data.id);
+      if (!user?.uid) return;
+      const linkDocRef = doc(db, `users/${user.uid}/links`, data.id);
       await updateDoc(linkDocRef, {
         title: data.title.trim(),
         url: data.url.trim(),
@@ -150,50 +189,58 @@ export default function Home() {
     onSuccess: () => {
       setEditingLinkId(null);
       editForm.reset();
-      queryClient.invalidateQueries({ queryKey: ["links"] });
+      queryClient.invalidateQueries({ queryKey: ["links", user?.uid] });
+      toast.success("링크가 성공적으로 수정되었습니다.");
     },
     onError: (error) => {
       console.error("Error updating link:", error);
+      toast.error("링크 수정에 실패했습니다.");
     }
   });
 
   // 5. 링크 삭제 Mutation
   const deleteLinkMutation = useMutation({
     mutationFn: async (id: string) => {
-      await deleteDoc(doc(db, "users/anonymous/links", id));
+      if (!user?.uid) return;
+      await deleteDoc(doc(db, `users/${user.uid}/links`, id));
     },
     onSuccess: () => {
       if (editingLinkId === deletingLink?.id) {
         setEditingLinkId(null);
       }
       setDeletingLink(null);
-      queryClient.invalidateQueries({ queryKey: ["links"] });
+      queryClient.invalidateQueries({ queryKey: ["links", user?.uid] });
+      toast.success("링크가 완전히 삭제되었습니다.");
     },
     onError: (error) => {
       console.error("Error deleting link:", error);
+      toast.error("링크 삭제에 실패했습니다.");
     }
   });
 
   // 6. 프로필 수정 Mutation (Optimistic Update)
   const updateProfileMutation = useMutation({
     mutationFn: async (newProfile: ProfileFormValues) => {
-      const profileDocRef = doc(db, "users", "anonymous");
+      if (!user?.uid) return;
+      const profileDocRef = doc(db, "users", user.uid);
       await updateDoc(profileDocRef, {
         username: newProfile.username.trim(),
         displayName: newProfile.displayName.trim(),
+        avatarUrl: newProfile.avatarUrl ? newProfile.avatarUrl.trim() : "",
         updatedAt: new Date().toISOString(),
       });
     },
     onMutate: async (newProfile) => {
-      await queryClient.cancelQueries({ queryKey: ["profile"] });
-      const previousProfile = queryClient.getQueryData<Profile>(["profile"]);
+      await queryClient.cancelQueries({ queryKey: ["profile", user?.uid] });
+      const previousProfile = queryClient.getQueryData<Profile>(["profile", user?.uid]);
       
-      queryClient.setQueryData<Profile>(["profile"], (old) => {
+      queryClient.setQueryData<Profile>(["profile", user?.uid], (old) => {
         if (!old) return old;
         return {
           ...old,
           username: newProfile.username,
           displayName: newProfile.displayName,
+          avatarUrl: newProfile.avatarUrl,
         };
       });
 
@@ -201,15 +248,34 @@ export default function Home() {
     },
     onError: (err, newProfile, context) => {
       if (context?.previousProfile) {
-        queryClient.setQueryData(["profile"], context.previousProfile);
+        queryClient.setQueryData(["profile", user?.uid], context.previousProfile);
       }
       console.error("Error updating profile:", err);
+      toast.error("프로필 업데이트에 실패했습니다.");
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["profile"] });
+      queryClient.invalidateQueries({ queryKey: ["profile", user?.uid] });
     },
     onSuccess: () => {
       setIsProfileDialogOpen(false);
+      toast.success("프로필 정보가 안전하게 수정되었습니다.");
+    }
+  });
+
+  // 7. 링크 클릭수 트래킹 Mutation
+  const trackClickMutation = useMutation({
+    mutationFn: async (linkId: string) => {
+      if (!user?.uid) return;
+      const linkDocRef = doc(db, `users/${user.uid}/links`, linkId);
+      await updateDoc(linkDocRef, {
+        clicks: increment(1),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["links", user?.uid] });
+    },
+    onError: (error) => {
+      console.error("Error tracking click:", error);
     }
   });
 
@@ -223,6 +289,48 @@ export default function Home() {
       window.removeEventListener("click", handleGlobalClick);
     };
   }, []);
+
+  // 구글 소셜 로그인 연동
+  const handleGoogleLogin = async () => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const loggedUser = result.user;
+      
+      // 신규 회원가입 처리 유무 검사
+      const userRef = doc(db, "users", loggedUser.uid);
+      const docSnap = await getDoc(userRef);
+      
+      if (!docSnap.exists()) {
+        const emailId = loggedUser.email ? loggedUser.email.split("@")[0] : "user";
+        // 영문, 숫자, 하이픈, 언더바 형태가 아니면 정제
+        const sanitizedDisplayName = emailId.replace(/[^a-zA-Z0-9_-]/g, "_");
+        
+        const defaultProfile = {
+          uid: loggedUser.uid,
+          email: loggedUser.email || "",
+          displayName: sanitizedDisplayName,
+          username: loggedUser.displayName || "BORA JO",
+          createdAt: new Date().toISOString(),
+        };
+        await setDoc(userRef, defaultProfile);
+      }
+      toast.success(`${loggedUser.displayName || "회원"}님, MYLINK에 환영합니다!`);
+    } catch (error: any) {
+      console.error("Login error:", error);
+      toast.error("구글 소셜 로그인에 실패했습니다.");
+    }
+  };
+
+  // 로그아웃 연동
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      toast.info("안전하게 로그아웃되었습니다.");
+    } catch (error) {
+      console.error("Logout error:", error);
+      toast.error("로그아웃 도중 에러가 발생했습니다.");
+    }
+  };
 
   const onAddSubmit = (data: LinkFormValues) => {
     addLinkMutation.mutate(data);
@@ -255,6 +363,10 @@ export default function Home() {
     deleteLinkMutation.mutate(deletingLink.id);
   };
 
+  const handleLinkClick = (linkId: string) => {
+    trackClickMutation.mutate(linkId);
+  };
+
   // displayName 중복 확인
   const checkDisplayName = async (displayNameToCheck: string) => {
     if (!displayNameToCheck.trim()) {
@@ -283,12 +395,14 @@ export default function Home() {
       const usersRef = collection(db, "users");
       const q = query(usersRef, where("displayName", "==", displayNameToCheck.trim()));
       const snapshot = await getDocs(q);
-      const isDup = snapshot.docs.some(doc => doc.id !== "anonymous");
+      const isDup = snapshot.docs.some(doc => doc.id !== user?.uid);
 
       if (isDup) {
         setDuplicateError("이미 사용 중인 디스플레이 네임입니다.");
+        toast.error("중복된 디스플레이 네임입니다.");
       } else {
         setDuplicateSuccess("사용 가능한 디스플레이 네임입니다.");
+        toast.success("사용 가능한 디스플레이 네임입니다!");
       }
     } catch (error) {
       console.error("Duplicate check error:", error);
@@ -312,10 +426,60 @@ export default function Home() {
 
   const isUpdating = isLinksFetching || addLinkMutation.isPending || editLinkMutation.isPending || deleteLinkMutation.isPending;
 
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-white text-black flex items-center justify-center uppercase tracking-[0.2em] text-[10px] md:text-xs">
+        LOADING MYLINK...
+      </div>
+    );
+  }
+
+  // 1. 비로그인 사용자 랜딩 뷰포트
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-white text-black flex flex-col items-center uppercase tracking-[0.1em] text-[11px] sm:text-xs md:text-sm lg:text-base transition-all duration-300 relative justify-center px-6">
+        <header className="text-center max-w-md flex flex-col items-center gap-6">
+          <h1 className="font-bold tracking-[0.25em] text-xl sm:text-2xl md:text-3xl">
+            MYLINK
+          </h1>
+          <div className="w-[1px] h-8 md:h-12 bg-black"></div>
+          
+          <div className="opacity-80 leading-[2] tracking-wider text-[10px] md:text-xs font-light normal-case text-neutral-800 text-center mb-8">
+            나만의 고유한 활동을 단정하게 모아보세요.
+          </div>
+
+          <button
+            onClick={handleGoogleLogin}
+            className="bg-black text-white px-8 py-3.5 text-[9px] md:text-[10px] font-bold hover:bg-black/80 transition-all tracking-[0.2em] flex items-center gap-3 border border-black"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16" className="w-3.5 h-3.5">
+              <path d="M15.545 6.558a9.4 9.4 0 0 1 .139 1.626c0 2.434-.87 4.492-2.384 5.885h.002C11.978 15.292 10.158 16 8 16A8 8 0 1 1 8 0c2.2 0 4.053.807 5.513 2.164l-2.168 2.083C10.377 3.3 9.327 2.85 8 2.85c-2.856 0-5.178 2.378-5.178 5.15s2.322 5.15 5.178 5.15c3.15 0 4.757-2.186 4.957-3.645H8v-2.94z"/>
+            </svg>
+            GOOGLE SIGN IN
+          </button>
+        </header>
+
+        <footer className="absolute bottom-12 text-center text-[8px] md:text-[9px] opacity-40 tracking-[0.2em] flex flex-col gap-2 mt-auto">
+          <p>© {new Date().getFullYear()} MYLINK. ALL RIGHTS RESERVED.</p>
+        </footer>
+      </div>
+    );
+  }
+
+  // 2. 로그인 사용자 관리자 마이페이지 뷰포트
   return (
     <div className="min-h-screen bg-white text-black flex flex-col items-center uppercase tracking-[0.1em] text-[11px] sm:text-xs md:text-sm lg:text-base transition-all duration-300 relative">
+      
       {/* 네이버 블로그 스타일 최상단 툴바 (모바일 제외, sm 이상 뷰포트에서 화면 우측 상단 고정 노출) */}
       <div className="hidden sm:flex absolute top-6 right-6 md:right-12 gap-3 items-center z-30 tracking-[0.2em] text-[8px] md:text-[9px]">
+        {/* 통계 페이지 바로가기 */}
+        <Link
+          href="/stats"
+          className="border border-black bg-white text-black px-4 py-2 hover:bg-black hover:text-white transition-colors duration-300 font-bold"
+        >
+          STATISTICS
+        </Link>
+
         {/* 내 페이지 바로가기 (Primary Solid Style) */}
         <a
           href={profile ? `/${profile.displayName}` : "#"}
@@ -333,21 +497,38 @@ export default function Home() {
             profileForm.reset({
               username: profile?.username || "",
               displayName: profile?.displayName || "",
+              avatarUrl: profile?.avatarUrl || "",
             });
           }}
           className="border border-black bg-white text-black px-4 py-2 hover:bg-black hover:text-white transition-colors duration-300 font-bold"
         >
           EDIT PROFILE
         </button>
+
+        {/* 로그아웃 버튼 */}
+        <button
+          onClick={handleLogout}
+          className="border border-red-600 bg-white text-red-600 px-4 py-2 hover:bg-red-600 hover:text-white transition-colors duration-300 font-bold"
+        >
+          LOGOUT
+        </button>
       </div>
 
       {/* Top Header */}
       <header className="w-full text-center pt-24 pb-16 md:pt-32 md:pb-24 flex flex-col items-center px-4">
         {/* 미니멀 아바타 아이콘 */}
-        <div className="w-16 h-16 md:w-20 md:h-20 border border-black rounded-full flex items-center justify-center mb-6 opacity-80 bg-neutral-50/50">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={0.8} stroke="currentColor" className="w-8 h-8 md:w-10 md:h-10">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-          </svg>
+        <div className="w-16 h-16 md:w-20 md:h-20 border border-black rounded-full flex items-center justify-center mb-6 opacity-80 bg-neutral-50/50 overflow-hidden">
+          {profile?.avatarUrl ? (
+            <img 
+              src={profile.avatarUrl} 
+              alt="Profile Avatar" 
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={0.8} stroke="currentColor" className="w-8 h-8 md:w-10 md:h-10">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+            </svg>
+          )}
         </div>
 
         <h1 className="font-bold tracking-[0.2em] text-lg sm:text-xl md:text-2xl lg:text-3xl mb-4 md:mb-6">
@@ -357,6 +538,39 @@ export default function Home() {
         <p className="opacity-60 text-[10px] md:text-xs lg:text-sm tracking-[0.15em] normal-case">
           my-link.com/{isProfileLoading ? "loading" : (profile?.displayName || "bora_jo")}
         </p>
+
+        {/* 모바일 대응 전용 버튼 (모바일 뷰포트에서 툴바 대신 하단 노출) */}
+        <div className="flex sm:hidden flex-col gap-2 w-full max-w-xs mt-6 tracking-[0.25em]">
+          <a
+            href={profile ? `/${profile.displayName}` : "#"}
+            className="bg-black text-white py-3 hover:bg-black/80 transition-colors duration-300 font-bold border border-black text-center text-[9px]"
+          >
+            내 페이지 바로가기
+          </a>
+          <div className="flex gap-2 w-full">
+            <button
+              onClick={() => {
+                setIsProfileDialogOpen(true);
+                setDuplicateError(null);
+                setDuplicateSuccess(null);
+                profileForm.reset({
+                  username: profile?.username || "",
+                  displayName: profile?.displayName || "",
+                  avatarUrl: profile?.avatarUrl || "",
+                });
+              }}
+              className="flex-1 border border-black bg-white text-black py-3 hover:bg-black hover:text-white transition-colors duration-300 font-bold text-center text-[9px]"
+            >
+              EDIT PROFILE
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex-1 border border-red-600 bg-white text-red-600 py-3 hover:bg-red-600 hover:text-white transition-colors duration-300 font-bold text-center text-[9px]"
+            >
+              LOGOUT
+            </button>
+          </div>
+        </div>
       </header>
 
       {/* Main Content */}
@@ -458,6 +672,7 @@ export default function Home() {
                   href={link.url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={() => handleLinkClick(link.id)}
                   className="group relative flex justify-center items-center w-full py-4 md:py-6 lg:py-8 border-b border-black hover:px-4 md:hover:px-8 transition-all duration-300 ease-in-out"
                 >
                   <div className="flex items-center gap-4">
@@ -467,6 +682,17 @@ export default function Home() {
                       className="w-4 h-4 md:w-5 md:h-5 grayscale group-hover:grayscale-0 transition-all duration-300 opacity-80 group-hover:opacity-100"
                     />
                     <span className="font-semibold tracking-[0.15em] md:text-sm lg:text-base">{link.title}</span>
+
+                    {/* 조회수 시각화 (눈 모양 SVG + 숫자, 0뷰 보장) */}
+                    <div className="flex items-center gap-1 opacity-45 group-hover:opacity-85 transition-opacity text-[9px] md:text-[10px] normal-case ml-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 md:w-4 md:h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                      </svg>
+                      <span className="font-medium tracking-normal">
+                        {link.clicks !== undefined && link.clicks !== null ? link.clicks : 0}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Action Gear Button & Dropdown */}
@@ -562,7 +788,7 @@ export default function Home() {
               <button 
                 type="button"
                 onClick={handleCloseDialog}
-                disabled={addForm.formState.isSubmitting}
+                disabled={addLinkMutation.isPending}
                 className="flex-1 border border-black py-4 hover:bg-black/5 transition-colors duration-300 tracking-[0.2em] font-bold text-[10px] md:text-xs disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 CANCEL
@@ -640,6 +866,60 @@ export default function Home() {
             <h2 className="text-center font-bold tracking-[0.2em] text-lg md:text-xl border-b border-black pb-4">EDIT PROFILE</h2>
             
             <div className="flex flex-col gap-6">
+              {/* 프로필 이미지 편집 영역 */}
+              <div className="flex flex-col items-center gap-4 mb-2">
+                <label className="text-[10px] md:text-xs font-bold tracking-[0.15em] uppercase text-center w-full">PROFILE PICTURE</label>
+                <div className="relative group/avatar w-20 h-20 md:w-24 md:h-24 border border-black rounded-full flex items-center justify-center bg-neutral-50/50 overflow-hidden">
+                  {profileForm.watch("avatarUrl") ? (
+                    <img 
+                      src={profileForm.watch("avatarUrl")} 
+                      alt="Avatar Preview" 
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={0.8} stroke="currentColor" className="w-8 h-8 md:w-10 md:h-10 opacity-40">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                    </svg>
+                  )}
+                  {/* 오버레이 업로드 단추 */}
+                  <label className="absolute inset-0 bg-black/40 opacity-0 group-hover/avatar:opacity-100 transition-opacity duration-300 flex items-center justify-center cursor-pointer text-white text-[8px] md:text-[9px] font-bold tracking-widest uppercase">
+                    CHANGE
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      className="hidden" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (file.size > 700 * 1024) {
+                            toast.error("용량이 작은 미니멀한 이미지를 사용해 주세요 (700KB 이하).");
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            profileForm.setValue("avatarUrl", reader.result as string, { shouldDirty: true });
+                            toast.success("프로필 이미지가 임시 업로드되었습니다. 저장 단추를 눌러주세요.");
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+                {profileForm.watch("avatarUrl") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      profileForm.setValue("avatarUrl", "", { shouldDirty: true });
+                      toast.info("프로필 이미지가 기본값으로 설정되었습니다.");
+                    }}
+                    className="text-red-500 hover:text-red-700 text-[8px] md:text-[9px] font-bold tracking-[0.1em] uppercase transition-colors"
+                  >
+                    REMOVE PICTURE
+                  </button>
+                )}
+              </div>
+
               <div className="flex flex-col gap-2">
                 <label className="text-[10px] md:text-xs font-bold tracking-[0.15em] uppercase">USERNAME</label>
                 <input 
