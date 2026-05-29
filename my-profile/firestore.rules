@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. users 컬렉션 및 프로필(users/{userId}) 보안 규칙
+    match /users/{userId} {
+      // 읽기: 누구나 가능 (displayName 중복 확인 및 프로필 페이지 전시 목적)
+      allow read: if true;
+      
+      // 쓰기 (생성 및 수정): 로그인되어 있고, 요청 uid가 문서의 userId와 일치할 때만 허용
+      // 프로필 편집 시 데이터 오염 및 부적절한 구조 삽입 방지용 유효성 검사(Validation) 적용
+      allow create, update: if request.auth != null && request.auth.uid == userId
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 30
+        && request.resource.data.displayName.matches('^[a-zA-Z0-9_-]+$')
+        && request.resource.data.username is string
+        && request.resource.data.username.size() >= 1
+        && request.resource.data.username.size() <= 50;
+
+      // 삭제: 본인만 삭제 가능
+      allow delete: if request.auth != null && request.auth.uid == userId;
+
+      // 2. 사용자의 링크 목록 서브 컬렉션 (users/{userId}/links/{linkId}) 보안 규칙
+      match /links/{linkId} {
+        // 읽기: 누구나 가능 (방문자 링크 조회)
+        allow read: if true;
+        
+        // 쓰기 (생성 및 수정): 로그인되어 있고, 요청 uid가 상위 문서의 userId와 일치할 때만 허용
+        // 링크 타이틀 및 목적지 URL에 대한 기본적인 자료형 및 최소 크기 검증
+        allow create, update: if request.auth != null && request.auth.uid == userId
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 1
+          && request.resource.data.url is string
+          && request.resource.data.url.size() >= 5;
+          
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // 3. 예비용 profile 서브 컬렉션 (users/{userId}/profile/{profileId}) 보안 규칙
+      match /profile/{profileId} {
+        allow read: if true;
+        allow write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+}

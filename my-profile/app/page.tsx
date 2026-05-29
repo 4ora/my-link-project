@@ -314,6 +314,33 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-white text-black flex flex-col items-center uppercase tracking-[0.1em] text-[11px] sm:text-xs md:text-sm lg:text-base transition-all duration-300 relative">
+      {/* 네이버 블로그 스타일 최상단 툴바 (모바일 제외, sm 이상 뷰포트에서 화면 우측 상단 고정 노출) */}
+      <div className="hidden sm:flex absolute top-6 right-6 md:right-12 gap-3 items-center z-30 tracking-[0.2em] text-[8px] md:text-[9px]">
+        {/* 내 페이지 바로가기 (Primary Solid Style) */}
+        <a
+          href={profile ? `/${profile.displayName}` : "#"}
+          className="bg-black text-white px-4 py-2 hover:bg-black/80 transition-colors duration-300 font-bold border border-black"
+        >
+          내 페이지 바로가기
+        </a>
+
+        {/* 프로필 수정 (Secondary Style) */}
+        <button
+          onClick={() => {
+            setIsProfileDialogOpen(true);
+            setDuplicateError(null);
+            setDuplicateSuccess(null);
+            profileForm.reset({
+              username: profile?.username || "",
+              displayName: profile?.displayName || "",
+            });
+          }}
+          className="border border-black bg-white text-black px-4 py-2 hover:bg-black hover:text-white transition-colors duration-300 font-bold"
+        >
+          EDIT PROFILE
+        </button>
+      </div>
+
       {/* Top Header */}
       <header className="w-full text-center pt-24 pb-16 md:pt-32 md:pb-24 flex flex-col items-center px-4">
         {/* 미니멀 아바타 아이콘 */}
@@ -327,36 +354,9 @@ export default function Home() {
           {isProfileLoading ? "LOADING..." : (profile?.username || "BORA JO")}
         </h1>
         <div className="w-[1px] h-8 md:h-12 lg:h-16 bg-black mx-auto mb-4 md:mb-6"></div>
-        <p className="opacity-60 text-[10px] md:text-xs lg:text-sm tracking-[0.15em] normal-case mb-8">
+        <p className="opacity-60 text-[10px] md:text-xs lg:text-sm tracking-[0.15em] normal-case">
           my-link.com/{isProfileLoading ? "loading" : (profile?.displayName || "bora_jo")}
         </p>
-
-        {/* 반응형 버튼 배치 (모바일 세로, sm 이상 가로 정렬) */}
-        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-center justify-center w-full max-w-xs sm:max-w-none">
-          {/* 내 페이지 바로가기 (Primary Solid Style) */}
-          <a
-            href={profile ? `/${profile.displayName}` : "#"}
-            className="w-full sm:w-auto bg-black text-white px-6 py-2.5 text-[9px] md:text-[10px] hover:bg-black/80 transition-colors duration-300 tracking-[0.2em] font-bold text-center border border-black"
-          >
-            내 페이지 바로가기
-          </a>
-
-          {/* 프로필 수정 (Secondary Style) */}
-          <button
-            onClick={() => {
-              setIsProfileDialogOpen(true);
-              setDuplicateError(null);
-              setDuplicateSuccess(null);
-              profileForm.reset({
-                username: profile?.username || "",
-                displayName: profile?.displayName || "",
-              });
-            }}
-            className="w-full sm:w-auto border border-black bg-white text-black px-6 py-2.5 text-[9px] md:text-[10px] hover:bg-black hover:text-white transition-colors duration-300 tracking-[0.2em] font-bold text-center"
-          >
-            EDIT PROFILE
-          </button>
-        </div>
       </header>
 
       {/* Main Content */}
