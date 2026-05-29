@@ -101,6 +101,7 @@ export default function Home() {
       await updateDoc(linkDocRef, {
         title: data.title.trim(),
         url: data.url.trim(),
+        updatedAt: new Date().toISOString(),
       });
       setEditingLinkId(null);
       editForm.reset();
