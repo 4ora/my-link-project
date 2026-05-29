@@ -522,6 +522,7 @@ export default function Home() {
         <div className="w-16 h-16 md:w-20 md:h-20 border border-black rounded-full flex items-center justify-center mb-6 opacity-80 bg-neutral-50/50 overflow-hidden">
           {profile?.avatarUrl ? (
             <img 
+              key={profile.avatarUrl}
               src={profile.avatarUrl} 
               alt="Profile Avatar" 
               className="w-full h-full object-cover"
@@ -909,8 +910,26 @@ export default function Home() {
                             const storageRef = ref(storage, `avatars/${user.uid}/${timestamp}_${file.name}`);
                             await uploadBytes(storageRef, file);
                             const downloadURL = await getDownloadURL(storageRef);
+                            
+                            // 1) 폼 값 업데이트
                             profileForm.setValue("avatarUrl", downloadURL, { shouldDirty: true });
-                            toast.success("프로필 이미지가 업로드되었습니다. 저장 단추를 눌러주세요.");
+                            
+                            // 2) Firestore에 즉시 저장
+                            const { doc: firestoreDoc, updateDoc: firestoreUpdateDoc } = await import("firebase/firestore");
+                            const profileDocRef = firestoreDoc(db, "users", user.uid);
+                            await firestoreUpdateDoc(profileDocRef, {
+                              avatarUrl: downloadURL,
+                              updatedAt: new Date().toISOString(),
+                            });
+                            
+                            // 3) React Query 캐시 갱신
+                            queryClient.setQueryData<Profile>(["profile", user.uid], (old) => {
+                              if (!old) return old;
+                              return { ...old, avatarUrl: downloadURL };
+                            });
+                            queryClient.invalidateQueries({ queryKey: ["profile", user.uid] });
+                            
+                            toast.success("프로필 이미지가 성공적으로 변경되었습니다!");
                           } catch (error) {
                             console.error("Avatar upload error:", error);
                             toast.error("이미지 업로드에 실패했습니다.");
