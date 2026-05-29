@@ -41,7 +41,7 @@ export default function Home() {
       } else {
         setIsUpdating(true);
       }
-      const q = query(collection(db, "users/anonymous/links"), orderBy("createdAt", "desc"));
+      const q = query(collection(db, "users/anonymous/links"), orderBy("createdAt", "asc"));
       const snapshot = await getDocs(q);
       const linksData = snapshot.docs.map(doc => ({
         id: doc.id,
